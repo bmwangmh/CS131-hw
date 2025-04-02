@@ -20,8 +20,7 @@
 	"customizations": {
 		"vscode": {
 			"extensions": [
-			    "ocamllabs.ocaml-platform",
-			    "allanblanchard.ocp-indent"
+			    "ocamllabs.ocaml-platform"
 			]
 		}
 	}

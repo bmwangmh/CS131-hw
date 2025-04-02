@@ -4,16 +4,17 @@ FROM ubuntu:20.04
 
 # Create a user
 
-ARG USERNAME=cis3410
+ARG USERNAME=cs131
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 
 ENV TZ='Asia/Shanghai'
 # !!![zjy] apt change ustc source
-RUN apt-get update -y\
+RUN apt-get update -y \
     && apt-get install -y --no-install-recommends \
     apt-transport-https \
     ca-certificates \
+    dos2unix \
     tzdata \
     && sed -i "s@http://.*.ubuntu.com@https://mirrors.ustc.edu.cn@g" /etc/apt/sources.list \
     && rm -rf /var/apt/cache/*
@@ -21,7 +22,7 @@ RUN apt-get update -y\
 RUN groupadd --gid $USER_GID $USERNAME \
     #
     # [Optional] Add sudo support. Omit if you don't need to install software after connecting.
-    && apt-get update -y \
+    && apt-get update \
     && apt-get install -y sudo \
     && echo $USERNAME ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME \
     && chmod 0440 /etc/sudoers.d/$USERNAME
@@ -30,6 +31,8 @@ RUN groupadd --gid $USER_GID $USERNAME \
 
 # See hack.sh
 COPY hack.sh /tmp/hack.sh
+# windows compatibility
+RUN dos2unix /tmp/hack.sh
 RUN chmod +x /tmp/hack.sh
 RUN /tmp/hack.sh
 
@@ -48,6 +51,7 @@ RUN useradd --uid $USER_UID --gid $USER_GID -m $USERNAME --shell /bin/zsh
 
 ## Set up user environmnent
 COPY .zshrc /home/$USERNAME/
+RUN dos2unix /home/$USERNAME/.zshrc
 RUN chown $USERNAME /home/$USERNAME/.zshrc
 
 ## Run in usermode
@@ -60,12 +64,13 @@ RUN touch /home/$USERNAME/.local/state/utop-history
 
 # Configure opam/ocaml
 # !!![zjy] change default repo to github (SJTU repo is failed)
-RUN opam init --yes --disable-sandboxing default https://github.com/ocaml/opam-repository.git
-RUN opam switch create 4.14.1 ocaml-base-compiler.4.14.1
+# RUN opam init --yes --disable-sandboxing default https://github.com/ocaml/opam-repository.git
+RUN opam init -y --disable-sandboxing --compiler=4.14.1
+# RUN opam switch create 4.14.1 ocaml-base-compiler.4.14.1
 RUN opam switch 4.14.1
-RUN opam install -y dune
-RUN opam install -y num
-RUN opam install -y menhir
+RUN opam install --yes dune
+RUN opam install --yes num
+RUN opam install --yes menhir
 RUN opam install -y utop
 RUN opam install -y ocamlformat
 RUN opam install -y ocaml-lsp-server
