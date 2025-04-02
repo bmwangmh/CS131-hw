@@ -1,0 +1,11 @@
+(library
+  (name studenttests)
+  (modules studenttests)
+  (libraries util hellocaml))
+
+(library
+ (name gradedtests)
+ (modules gradedtests)
+ (libraries util hellocaml))
+
+
