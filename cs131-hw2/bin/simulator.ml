@@ -381,13 +381,56 @@ exception Redefined_sym of lbl
   HINT: List.fold_left and List.fold_right are your friends.
  *)
 let is_size (is: ins list): quad = 
-  failwith "is_size not implemented"
+  ins_size *. Int64.of_int(List.length is)
 
 let ds_size (ds: data list): quad = 
-  failwith "ds_size not implemented"
+  List.fold_left (fun (acc: quad) (x: data) -> match x with Asciz str -> acc +. Int64.of_int(String.length str) +. 1L|Quad i -> acc +. 8L) 0L ds
+
+let seg_size = function
+  |Text l -> is_size l
+  |Data l -> ds_size l
+
+let find_label (htbl) = fun l -> match Hashtbl.find_opt htbl l with Some x -> x |None -> raise (Undefined_sym l)
+
+let replace_labels (htbl) (l: ins list) : ins list =
+  let replace_label (htbl) (ins: ins) : ins = 
+  let flbl = find_label htbl in
+  let (op, l) = ins in 
+    let r_label = function
+    |Imm (Lbl l) -> Imm (Lit (flbl l))
+    |Ind1 (Lbl l) -> Ind1 (Lit (flbl l))
+    |Ind3 (Lbl l, r) -> Ind3 (Lit (flbl l), r)
+    |op -> op
+    in let nl = List.map (r_label) l in
+    (op, nl) 
+  in List.map (replace_label htbl) l
+
 
 let assemble (p:prog) : exec =
-  failwith "assemble unimplemented"
+  let txt, data = List.partition (fun line -> match line.asm with Text _ -> true|_ -> false) p in
+  let htbl = Hashtbl.create (List.length txt) in
+  let text_pos = mem_bot in
+    let rec calc_size (acc1: quad) (acc2: quad)= function
+    |[] -> acc1, acc2
+    |e :: rest -> match e.asm with Text l -> calc_size (acc1 +. (is_size l)) acc2 rest|Data l -> calc_size acc1 (acc2 +. (ds_size l)) rest
+    in 
+    let txt_l, data_l = calc_size 0L 0L p in
+    let rec parse_lbl (acc: quad) = function
+    |[] -> ()
+    |e :: rest -> let lbl = e.lbl in
+    (match Hashtbl.find_opt htbl lbl with
+    | Some v -> raise (Redefined_sym lbl)
+    | None -> Hashtbl.add htbl lbl acc; parse_lbl (acc +. (seg_size e.asm)) rest)
+    in parse_lbl text_pos (txt @ data);
+  let data_pos = mem_bot +. txt_l in
+  let entry = find_label htbl "main" in
+  let txt_list = List.fold_left
+  (fun acc { asm; _ } -> match asm with Text is -> acc @ is| _ -> acc) [] txt in
+  let data_list = List.fold_left
+  (fun acc { asm; _ } -> match asm with Data ds -> acc @ ds| _ -> acc) [] data in
+  let text_seg = List.flatten (List.map sbytes_of_ins (replace_labels htbl txt_list)) in
+  let data_seg = List.flatten (List.map sbytes_of_data data_list) in
+  {entry;text_pos;data_pos;text_seg;data_seg}
 
 (* Convert an object file into an executable machine state. 
     - allocate the mem array
@@ -403,4 +446,11 @@ let assemble (p:prog) : exec =
   may be of use.
 *)
 let load {entry; text_pos; data_pos; text_seg; data_seg} : mach = 
-   failwith "load not implemented"
+  let mem = Array.make mem_size InsFrag in
+  List.iteri (fun i x -> mem.(i) <- x) (text_seg @ data_seg);
+  let regs = Array.make nregs 0L in
+  regs.(rind Rip) <- entry;
+  regs.(rind Rsp) <- mem_top -. 8L;
+  let res = map_addr_segfault (mem_top -. 8L) in
+    List.iteri (fun i byte -> mem.(res + i) <- byte) (sbytes_of_int64 exit_addr);
+  {flags = { fo = false; fs = false; fz = false }; regs; mem}
