@@ -1,0 +1,24 @@
+(library
+ (name llbackend)
+ (modules backend driver)
+ (libraries str num util x86 ll))
+
+(env
+  (dev
+    (flags (:standard -warn-error -A))))
+
+(executable
+ (public_name main)
+ (name main)
+ (modules main)
+ (promote (until-clean))
+ (libraries
+; OCaml standard libraries  
+; project libraries
+  str
+  num
+  util
+  x86
+  ll
+  studenttests
+  gradedtests))
