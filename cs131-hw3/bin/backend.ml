@@ -91,8 +91,10 @@ let lookup m x = List.assoc x m
    the X86 instruction that moves an LLVM operand into a designated
    destination (usually a register).
 *)
-let compile_operand (ctxt:ctxt) (dest:X86.operand) : Ll.operand -> ins =
-  function _ -> failwith "compile_operand unimplemented"
+let compile_operand (ctxt:ctxt) (dest:X86.operand) : Ll.operand -> ins = function
+  |Ll.Const i -> (Movq, [(Imm (Lit i)); dest])
+  |Ll.Null -> (Movq, [(Imm (Lit 0L)); dest])
+  |_ -> failwith "compile_operand unimplemented"
 
 
 
@@ -286,7 +288,14 @@ let compile_lbl_block fn lbl ctxt blk : elem =
    [ NOTE: the first six arguments are numbered 0 .. 5 ]
 *)
 let arg_loc (n : int) : operand =
-failwith "arg_loc not implemented"
+  match n with
+  |0 -> Reg Rdi
+  |1 -> Reg Rsi
+  |2 -> Reg Rcx
+  |3 -> Reg Rdx
+  |5 -> Reg R08
+  |6 -> Reg R09
+  |_ -> Ind3 (Lit (Int64.of_int(8 *(n - 4))), Rbp)
 
 
 (* We suggest that you create a helper function that computes the
@@ -299,7 +308,11 @@ failwith "arg_loc not implemented"
 
 *)
 let stack_layout (args : uid list) ((block, lbled_blocks):cfg) : layout =
-failwith "stack_layout not implemented"
+  let blocks = [block] @ (List.map (fun (_, blk) -> blk) lbled_blocks) in
+  let uidlist = args @ List.flatten (List.map (fun blk -> (fst blk.term) :: List.map fst blk.insns) blocks) in
+  let uids = List.sort_uniq (String.compare) uidlist in
+  let ret = List.fold_left_map (fun acc arg -> (acc + 1, (arg, Ind3 (Lit (Int64.of_int (-8 * acc)), Rbp)))) 1 uids in
+  snd ret
 
 (* The code for the entry-point of a function must do several things:
 
@@ -318,8 +331,13 @@ failwith "stack_layout not implemented"
      to hold all of the local stack slots.
 *)
 let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_param; f_cfg; _ }:fdecl) : prog =
-failwith "compile_fdecl unimplemented"
-
+  let open Asm in
+  let stk = stack_layout f_param f_cfg in
+  let stk_sz = List.length stk in
+  let funcname = Platform.mangle name in
+  gtext funcname ([ Pushq, [ ~%Rbp ]; Movq, [ ~%Rsp; ~%Rbp ]; Subq, [ ~$stk_sz; ~%Rsp ]]
+  @ snd (List.fold_left (fun (acc, inss) param -> (acc + 1, [Movq, [ arg_loc acc; ~%Rax ]; Movq, [ ~%Rax; lookup stk param ]] @ inss)) (0, []) f_param))
+  ::[]
 
 
 (* compile_gdecl ------------------------------------------------------------ *)
