@@ -318,7 +318,7 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
       |_ -> failwith "compile_insn: invalid store")
     |Call (tp, op, args) when is_callable op-> 
       let cnt_stk = max 0 (List.length args) - 6 in
-      [Subq,[~$16; ~%Rsp]]
+      [Andq, [~$(-16); ~%Rsp]]
       @ snd (List.fold_left (fun ((acc:int),(inss:ins list)) arg -> (acc + 1, inss
         @ (match acc with
         |n when n < 6 -> [compile_operand ctxt (arg_loc n) arg]
@@ -414,7 +414,7 @@ let stack_layout (args : uid list) ((block, lbled_blocks):cfg) : layout =
 let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_param; f_cfg; _ }:fdecl) : prog =
   let open Asm in
   let stk = stack_layout f_param f_cfg in
-  let stk_sz = 8 * List.length stk in
+  let stk_sz = 8 * (List.length stk) in
   let funcname = Platform.mangle name in
   let ctxt = {tdecls; layout = stk} in
   gtext funcname ([ Pushq, [ ~%Rbp ]; Movq, [ ~%Rsp; ~%Rbp ]; Subq, [ ~$stk_sz; ~%Rsp ]]
