@@ -238,12 +238,34 @@ failwith "compile_gep not implemented"
 
    - Bitcast: does nothing interesting at the assembly level
 *)
+let rec is_loadable (ctxt:ctxt) (tp:ty): bool = match tp with
+  |Ptr _ -> true
+  |Namedt lb -> is_loadable ctxt (lookup ctxt.tdecls lb)
+  |_ -> false
+
+
+
 let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
   let open Asm in
+  let dest = lookup ctxt.layout uid in
     match i with
     |Binop (bop, _, op1 ,op2) -> [compile_operand ctxt ~%Rax op1; compile_operand ctxt ~%Rcx op2;
     ((match bop with Add -> Addq|Sub -> Subq|Mul -> Imulq|Shl -> Shlq|Lshr -> Shrq|Ashr -> Sarq|And -> Andq|Or -> Orq|Xor -> Xorq), [~%Rcx; ~%Rax]);
-    Movq, [~%Rax; lookup ctxt.layout uid]]
+    Movq, [~%Rax; dest]]
+    |Icmp (cnd, _, op1, op2) -> [compile_operand ctxt ~%Rax op1; compile_operand ctxt ~%Rcx op2;
+    Movq, [~$0; ~%Rdx]; Cmpq, [~%Rcx; ~%Rax];
+    Set (compile_cnd cnd), [~%Rdx]; Movq, [~%Rdx; dest]]
+    |Alloca _ -> [Subq, [~$8; ~%Rsp]; Movq, [~%Rsp; dest]]
+    |Load (tp, op) when is_loadable ctxt tp -> (match op with
+      |Id id -> [Movq, [(lookup ctxt.layout id); ~%Rax]; Movq, [Ind2 Rax; ~%Rax]]
+      |Gid id -> [Movq, [Ind3 (Lbl (Platform.mangle id), Rip); ~%Rax]]
+      |_ -> failwith "compile_insn: invalid load")
+      @ [Movq, [~%Rax; dest]]
+    |Store (_, op1, op2) -> (compile_operand ctxt ~%Rax op1)
+      ::(match op2 with
+      |Id id -> [Movq, [(lookup ctxt.layout id); ~%Rcx]; Movq, [~%Rax; Ind2 Rcx]]
+      |Gid id -> [Movq, [~%Rax; Ind3 (Lbl (Platform.mangle id), Rip)]]
+      |_ -> failwith "compile_insn: invalid load")
     |_ -> failwith "compile_insn: this part unimplemented"
 
 
