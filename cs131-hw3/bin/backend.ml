@@ -210,8 +210,36 @@ let rec size_ty (tdecls:(tid * ty) list) (t:Ll.ty) : int =
       in (4), but relative to the type f the sub-element picked out
       by the path so far
 *)
-let compile_gep (ctxt:ctxt) (op : Ll.ty * Ll.operand) (path: Ll.operand list) : ins list =
-failwith "compile_gep not implemented"
+let rec compile_ptr (ctxt:ctxt) (tp:Ll.ty) (path: Ll.operand list) : ins list =
+  let open Asm in
+  match tp with
+  |Namedt tp -> compile_ptr ctxt (lookup ctxt.tdecls tp) path
+  |Struct tl -> (match path with
+    |(Const n) :: rest -> (match List.nth_opt tl (Int64.to_int n) with None -> failwith "compile_ptr: index out of range"
+      |Some ntp -> let ofs = List.fold_left (fun acc i -> acc + i) 0 (List.filteri (fun i _ -> i < Int64.to_int n) (List.map (size_ty ctxt.tdecls) tl)) in
+      [Addq, [~$ofs; ~%Rax]]
+      @ compile_ptr ctxt ntp rest)
+    |_ -> failwith "compile_ptr: unconst struct index")
+  |Array (_, ntp) -> (match path with |(Const _ as idx) :: rest|(Id _ as idx) :: rest -> (compile_operand ctxt ~%Rcx idx)
+      ::[Imulq, [~$(size_ty ctxt.tdecls ntp); ~%Rcx]; Addq, [~%Rcx; ~%Rax]]
+      @ compile_ptr ctxt ntp rest
+    |_ -> failwith "compile_ptr: invalid array index")
+  |_ -> match path with [] -> []
+    |_ -> failwith "compile_ptr: invalid type"
+
+
+let rec compile_gep (ctxt:ctxt) (op : Ll.ty * Ll.operand) (path: Ll.operand list) : ins list =
+  let open Asm in
+  match op with
+  |Namedt tp, op -> compile_gep ctxt (lookup ctxt.tdecls tp, op) path
+  |Ptr tp, op -> (match op with 
+    |Id _|Gid _ -> compile_operand ctxt ~%Rax op
+    |_ -> failwith "compile_gep: invalid operand")
+    :: (match path with |(Const _ as idx) :: rest|(Id _ as idx) :: rest -> [compile_operand ctxt ~%Rcx idx;
+      Imulq, [~$(size_ty ctxt.tdecls tp); ~%Rcx]; Addq, [~%Rcx; ~%Rax]]
+      @ compile_ptr ctxt tp rest
+    |_ -> failwith "compile_gep: invalid index operand")
+  |_ -> failwith "compile_gep: invalid type"
 
 
 
@@ -302,8 +330,8 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
       @ (if cnt_stk > 0 then [Addq, [~$(8 * cnt_stk); ~%Rsp]] else [])
       @ (if tp <> Void then [Movq, [~%Rax; lookup ctxt.layout uid]] else [])
     |Bitcast (_, op, _) -> [compile_operand ctxt ~%Rax op; Movq, [~%Rax; dest]]
+    |Gep (tp, op, opl) -> compile_gep ctxt (tp, op) opl @ [Movq, [~%Rax; dest]]
     |_ -> failwith "compile_insn: this part unimplemented"
-
 
 
 (* compiling terminators  --------------------------------------------------- *)
