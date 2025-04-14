@@ -96,7 +96,6 @@ let compile_operand (ctxt:ctxt) (dest:X86.operand) : Ll.operand -> ins = functio
   |Ll.Null -> (Movq, [(Imm (Lit 0L)); dest])
   |Ll.Gid gid -> (Leaq, [Ind3 (Lbl (Platform.mangle gid), Rip); dest])
   |Ll.Id id -> (Movq, [lookup ctxt.layout id; dest])
-  |_ -> failwith "compile_operand: unreached"
 
 
 
@@ -240,7 +239,12 @@ failwith "compile_gep not implemented"
    - Bitcast: does nothing interesting at the assembly level
 *)
 let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
-      failwith "compile_insn not implemented"
+  let open Asm in
+    match i with
+    |Binop (bop, _, op1 ,op2) -> [compile_operand ctxt ~%Rax op1; compile_operand ctxt ~%Rcx op2;
+    ((match bop with Add -> Addq|Sub -> Subq|Mul -> Imulq|Shl -> Shlq|Lshr -> Shrq|Ashr -> Sarq|And -> Andq|Or -> Orq|Xor -> Xorq), [~%Rcx; ~%Rax]);
+    Movq, [~%Rax; lookup ctxt.layout uid]]
+    |_ -> failwith "compile_insn: this part unimplemented"
 
 
 
@@ -279,7 +283,8 @@ let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
    [blk]  - LLVM IR code for the block
 *)
 let compile_block (fn:string) (ctxt:ctxt) (blk:Ll.block) : ins list =
-  failwith "compile_block not implemented"
+  List.flatten (List.map (compile_insn ctxt) blk.insns) @
+  compile_terminator fn ctxt (snd blk.term)
 
 let compile_lbl_block fn lbl ctxt blk : elem =
   Asm.text (mk_lbl fn lbl) (compile_block fn ctxt blk)
@@ -344,11 +349,13 @@ let stack_layout (args : uid list) ((block, lbled_blocks):cfg) : layout =
 let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_param; f_cfg; _ }:fdecl) : prog =
   let open Asm in
   let stk = stack_layout f_param f_cfg in
-  let stk_sz = List.length stk in
+  let stk_sz = 8 * List.length stk in
   let funcname = Platform.mangle name in
+  let ctxt = {tdecls; layout = stk} in
   gtext funcname ([ Pushq, [ ~%Rbp ]; Movq, [ ~%Rsp; ~%Rbp ]; Subq, [ ~$stk_sz; ~%Rsp ]]
-  @ snd (List.fold_left (fun (acc, inss) param -> (acc + 1, [Movq, [ arg_loc acc; ~%Rax ]; Movq, [ ~%Rax; lookup stk param ]] @ inss)) (0, []) f_param))
-  ::[]
+  @ snd (List.fold_left (fun (acc, inss) param -> (acc + 1, inss @ [Movq, [ arg_loc acc; ~%Rax ]; Movq, [ ~%Rax; lookup stk param ]])) (0, []) f_param)
+  @ compile_block funcname ctxt (fst f_cfg))
+  :: List.map (fun (lbl, lblk) -> compile_lbl_block funcname lbl ctxt lblk) (snd f_cfg)
 
 
 (* compile_gdecl ------------------------------------------------------------ *)
