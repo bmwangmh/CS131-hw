@@ -1,6 +1,6 @@
 SUBMIT := $(shell cat submit_zip_contents.txt)
 HWNAME := hw3
-TIMESTAMP := $(shell /bin/date "+%Y-%m-%d-%H:%M:%S")
+TIMESTAMP := $(shell date "+%Y-%m-%d-%H:%M:%S")
 ZIPNAME := $(HWNAME)-submit-$(TIMESTAMP).zip
 
 .PHONY: all oatc test clean zip
