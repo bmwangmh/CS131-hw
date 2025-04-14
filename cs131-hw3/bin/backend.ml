@@ -243,7 +243,29 @@ let rec is_loadable (ctxt:ctxt) (tp:ty): bool = match tp with
   |Namedt lb -> is_loadable ctxt (lookup ctxt.tdecls lb)
   |_ -> false
 
+let is_callable (op:Ll.operand): bool = match op with
+  |Id _ -> true
+  |Gid _ -> true
+  |_ -> false
 
+(* Complete this helper function, which computes the location of the nth incoming
+   function argument: either in a register or relative to %rbp,
+   according to the calling conventions. We will test this function as part of
+   the hidden test cases.
+
+   You might find it useful for compile_fdecl.
+
+   [ NOTE: the first six arguments are numbered 0 .. 5 ]
+*)
+let arg_loc (n : int) : operand =
+  match n with
+  |0 -> Reg Rdi
+  |1 -> Reg Rsi
+  |2 -> Reg Rcx
+  |3 -> Reg Rdx
+  |4 -> Reg R08
+  |5 -> Reg R09
+  |_ -> Ind3 (Lit (Int64.of_int(8 *(n - 4))), Rbp)
 
 let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
   let open Asm in
@@ -265,7 +287,20 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
       ::(match op2 with
       |Id id -> [Movq, [(lookup ctxt.layout id); ~%Rcx]; Movq, [~%Rax; Ind2 Rcx]]
       |Gid id -> [Movq, [~%Rax; Ind3 (Lbl (Platform.mangle id), Rip)]]
-      |_ -> failwith "compile_insn: invalid load")
+      |_ -> failwith "compile_insn: invalid store")
+    |Call (tp, op, args) when is_callable op-> 
+      let cnt_stk = max 0 (List.length args) - 6 in
+      [Subq,[~$16; ~%Rsp]]
+      @ snd (List.fold_left (fun ((acc:int),(inss:ins list)) arg -> (acc + 1, inss
+        @ (match acc with
+        |n when n < 6 -> [compile_operand ctxt (arg_loc n) arg]
+        |_ -> [compile_operand ctxt ~%Rax arg; Pushq, [~%Rax]])
+        )) (0,[]) (List.map snd args))
+      @ (match op with |Gid id -> [Callq, [Imm (Lbl (Platform.mangle id))]]
+        |Id id -> [Movq, [(lookup ctxt.layout id); ~%Rax]; Callq, [~%Rax]]
+        |_ -> failwith "compile_insn: invalid call")
+      @ (if cnt_stk > 0 then [Addq, [~$(8 * cnt_stk); ~%Rsp]] else [])
+      @ (if tp <> Void then [Movq, [~%Rax; lookup ctxt.layout uid]] else [])
     |_ -> failwith "compile_insn: this part unimplemented"
 
 
@@ -314,27 +349,6 @@ let compile_lbl_block fn lbl ctxt blk : elem =
 
 
 (* compile_fdecl ------------------------------------------------------------ *)
-
-
-(* Complete this helper function, which computes the location of the nth incoming
-   function argument: either in a register or relative to %rbp,
-   according to the calling conventions. We will test this function as part of
-   the hidden test cases.
-
-   You might find it useful for compile_fdecl.
-
-   [ NOTE: the first six arguments are numbered 0 .. 5 ]
-*)
-let arg_loc (n : int) : operand =
-  match n with
-  |0 -> Reg Rdi
-  |1 -> Reg Rsi
-  |2 -> Reg Rcx
-  |3 -> Reg Rdx
-  |5 -> Reg R08
-  |6 -> Reg R09
-  |_ -> Ind3 (Lit (Int64.of_int(8 *(n - 4))), Rbp)
-
 
 (* We suggest that you create a helper function that computes the
    stack layout for a given function declaration.
