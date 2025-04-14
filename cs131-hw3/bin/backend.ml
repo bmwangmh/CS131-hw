@@ -301,6 +301,7 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
         |_ -> failwith "compile_insn: invalid call")
       @ (if cnt_stk > 0 then [Addq, [~$(8 * cnt_stk); ~%Rsp]] else [])
       @ (if tp <> Void then [Movq, [~%Rax; lookup ctxt.layout uid]] else [])
+    |Bitcast (_, op, _) -> [compile_operand ctxt ~%Rax op; Movq, [~%Rax; dest]]
     |_ -> failwith "compile_insn: this part unimplemented"
 
 
