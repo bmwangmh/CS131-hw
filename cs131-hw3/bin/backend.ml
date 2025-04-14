@@ -94,7 +94,9 @@ let lookup m x = List.assoc x m
 let compile_operand (ctxt:ctxt) (dest:X86.operand) : Ll.operand -> ins = function
   |Ll.Const i -> (Movq, [(Imm (Lit i)); dest])
   |Ll.Null -> (Movq, [(Imm (Lit 0L)); dest])
-  |_ -> failwith "compile_operand unimplemented"
+  |Ll.Gid gid -> (Leaq, [Ind3 (Lbl (Platform.mangle gid), Rip); dest])
+  |Ll.Id id -> (Movq, [lookup ctxt.layout id; dest])
+  |_ -> failwith "compile_operand: unreached"
 
 
 
@@ -175,8 +177,12 @@ let compile_operand (ctxt:ctxt) (dest:X86.operand) : Ll.operand -> ins = functio
      Your function should simply return 0 in those cases
 *)
 let rec size_ty (tdecls:(tid * ty) list) (t:Ll.ty) : int =
-failwith "size_ty not implemented"
-
+  match t with 
+  |Void|I8|Fun _ -> 0
+  |I1|I64|Ptr _ -> 8
+  |Array (n, tp) -> n * size_ty tdecls tp
+  |Struct tl -> List.fold_left (fun acc tp -> acc + size_ty tdecls tp) 0 tl
+  |Namedt lb -> size_ty tdecls (lookup tdecls lb)
 
 
 
@@ -257,7 +263,12 @@ let mk_lbl (fn:string) (l:string) = fn ^ "." ^ l
    [fn] - the name of the function containing this terminator
 *)
 let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
-  failwith "compile_terminator not implemented"
+  let open Asm in
+  match t with
+  |Ret (_, None) -> [Movq, [~%Rbp; ~%Rsp]; Popq, [~%Rbp]; Retq, []]
+  |Ret (_, Some op) -> [compile_operand ctxt ~%Rax op; Movq, [~%Rbp; ~%Rsp]; Popq, [~%Rbp]; Retq, []]
+  |Br lb -> [Jmp, [~$$(mk_lbl fn lb)]]
+  |Cbr (op,lb1,lb2) -> [compile_operand ctxt ~%Rax op; Cmpq, [~$1; ~%Rax];J Eq, [~$$(mk_lbl fn lb1)];Jmp, [~$$(mk_lbl fn lb2)]]
 
 
 (* compiling blocks --------------------------------------------------------- *)
