@@ -58,6 +58,13 @@ let loc (startpos:Lexing.position) (endpos:Lexing.position) (elt:'a) : 'a node =
 
 
 
+%left IOR
+%left IAND
+%left OR
+%left AND
+%left EQEQ NEQ
+%left LT LTE GT GTE
+%left SHL SHR SAR
 %left PLUS DASH
 %left STAR
 %nonassoc BANG
@@ -100,6 +107,7 @@ arglist:
     
 ty:
   | TINT   { TInt }
+  | TBOOL  { TBool }
   | r=rtyp { TRef r } 
 
 
@@ -116,6 +124,18 @@ ty:
   | DASH   { Sub }
   | STAR   { Mul }
   | EQEQ   { Eq } 
+  | NEQ    { Neq } 
+  | LT     { Lt } 
+  | GT     { Gt } 
+  | LTE    { Lte } 
+  | GTE    { Gte } 
+  | SHL    { Shl } 
+  | SHR    { Shr } 
+  | SAR    { Sar } 
+  | AND    { And } 
+  | OR     { Or } 
+  | IAND   { IAnd } 
+  | IOR     { IOr } 
 
 %inline uop:
   | DASH  { Neg }
@@ -124,7 +144,12 @@ ty:
 
 gexp:
   | t=rtyp NULL  { loc $startpos $endpos @@ CNull t }
-  | i=INT      { loc $startpos $endpos @@ CInt i } 
+  | i=INT        { loc $startpos $endpos @@ CInt i } 
+  | st=STRING    { loc $startpos $endpos @@ CStr st } 
+  | TRUE         { loc $startpos $endpos @@ CBool true } 
+  | FALSE        { loc $startpos $endpos @@ CBool false } 
+  | NEW t=ty LBRACKET RBRACKET LBRACE el=separated_list(COMMA, gexp) RBRACE
+                 { loc $startpos $endpos @@ CArr (t, el) }
 
 lhs:  
   | id=IDENT            { loc $startpos $endpos @@ Id id }
@@ -133,7 +158,14 @@ lhs:
 
 exp:
   | i=INT               { loc $startpos $endpos @@ CInt i }
-  | t=rtyp NULL           { loc $startpos $endpos @@ CNull t }
+  | t=rtyp NULL         { loc $startpos $endpos @@ CNull t }
+  | st=STRING           { loc $startpos $endpos @@ CStr st } 
+  | TRUE                { loc $startpos $endpos @@ CBool true } 
+  | FALSE               { loc $startpos $endpos @@ CBool false } 
+  | NEW t=ty LBRACKET RBRACKET LBRACE el=separated_list(COMMA, exp) RBRACE
+                 { loc $startpos $endpos @@ CArr (t, el) }
+  | NEW t=ty LBRACKET e=exp RBRACKET
+                 { loc $startpos $endpos @@ NewArr (t, e) }
   | e1=exp b=bop e2=exp { loc $startpos $endpos @@ Bop (b, e1, e2) }
   | u=uop e=exp         { loc $startpos $endpos @@ Uop (u, e) }
   | id=IDENT            { loc $startpos $endpos @@ Id id }
@@ -156,6 +188,8 @@ stmt:
   | RETURN e=exp SEMI   { loc $startpos $endpos @@ Ret(Some e) }
   | WHILE LPAREN e=exp RPAREN b=block  
                         { loc $startpos $endpos @@ While(e, b) } 
+  | FOR LPAREN vds=separated_list(COMMA, vdecl) SEMI e=exp? SEMI s=stmt? RPAREN b=block  
+                        { loc $startpos $endpos @@ For(vds, e, s, b) } 
 
 block:
   | LBRACE stmts=list(stmt) RBRACE { stmts }
