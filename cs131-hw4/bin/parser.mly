@@ -17,10 +17,15 @@ let loc (startpos:Lexing.position) (endpos:Lexing.position) (elt:'a) : 'a node =
 %token TINT     /* int */
 %token TVOID    /* void */
 %token TSTRING  /* string */
+%token TBOOL    /* bool */
+%token TURE     /* true */
+%token FALSE    /* false */
 %token IF       /* if */
 %token ELSE     /* else */
+%token FOR      /* for */
 %token WHILE    /* while */
 %token RETURN   /* return */
+%token NEW      /* new */
 %token VAR      /* var */
 %token SEMI     /* ; */
 %token COMMA    /* , */
@@ -37,6 +42,18 @@ let loc (startpos:Lexing.position) (endpos:Lexing.position) (elt:'a) : 'a node =
 %token RBRACKET /* ] */
 %token TILDE    /* ~ */
 %token BANG     /* ! */
+%token NEG      /* != */
+%token LT       /* < */
+%token GT       /* > */
+%token LTE      /* <= */
+%token GTE      /* >= */
+%token AND      /* & */
+%token OR       /* | */
+%token SHL      /* << */
+%token SHR      /* >> */
+%token SAR      /* >>> */
+%token IAND     /* [&] */
+%token IOR      /* [|] */
 %token GLOBAL   /* global */
 
 
