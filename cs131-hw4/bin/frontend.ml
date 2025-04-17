@@ -412,7 +412,11 @@ let cmp_global_ctxt (c:Ctxt.t) (p:Ast.prog) : Ctxt.t =
    5. Use cfg_of_stream to produce a LLVMlite cfg from 
  *)
 let cmp_fdecl (c:Ctxt.t) (f:Ast.fdecl node) : Ll.fdecl * (Ll.gid * Ll.gdecl) list =
-  failwith "cmp_fdecl not implemented"
+  let rt = cmp_ret_ty f.elt.frtyp in
+  let f_ty = (List.map (fun (arg, _) -> cmp_ty arg) f.elt.args), rt in
+  let f_param = List.map snd f.elt.args in
+  let f_cfg, gdecls = cfg_of_stream (snd (cmp_block c rt f.elt.body)) in
+    {f_ty; f_param; f_cfg}, gdecls
 
 
 (* Compile a global initializer, returning the resulting LLVMlite global
@@ -426,8 +430,15 @@ let cmp_fdecl (c:Ctxt.t) (f:Ast.fdecl node) : Ll.fdecl * (Ll.gid * Ll.gdecl) lis
    - OAT arrays are always handled via pointers. A global array of arrays will
      be an array of pointers to arrays emitted as additional global declarations.
 *)
-let rec cmp_gexp c (e:Ast.exp node) : Ll.gdecl * (Ll.gid * Ll.gdecl) list =
-  failwith "cmp_init not implemented"
+let rec cmp_gexp (c:Ctxt.t) (e:Ast.exp node) : Ll.gdecl * (Ll.gid * Ll.gdecl) list =
+  match e.elt with
+  |CNull rty -> (Ptr (cmp_rty rty), GNull), []
+  |CBool v -> (I1, GInt (if v then 1L else 0L)), []
+  |CInt v -> (I64, GInt v), []
+  |CStr st -> let strsym = gensym "str" in 
+    (Ptr I8, GGid strsym), [strsym, (Array (String.length st + 1, I8), GString st)]
+  |CArr (ty, el) -> failwith "cmp_gexp: array unimplemented"
+  |_ -> failwith "cmp_gexp: invalid global type"
 
 
 (* Oat internals function context ------------------------------------------- *)
