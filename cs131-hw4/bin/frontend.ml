@@ -319,6 +319,11 @@ let cmp_uop (u:Ast.unop) (ty:Ll.ty) (op:Ll.operand) (ret:Ll.uid) : stream =
   |Neg -> [I (ret, Binop (Sub ,ty , Const 0L, op))]
   |Lognot -> [I (ret, Binop (Xor ,ty , Const 1L, op))]
   |Bitnot -> [I (ret, Binop (Xor ,ty , Const (-1L), op))]
+
+let cmp_deref (ty:Ll.ty) : Ll.ty =
+  match ty with
+  |Ptr dty -> dty
+  |_ -> failwith "cmp_deref: not a pointer"
 (* Compiles an expression exp in context c, outputting the Ll operand that will
    recieve the value of the expression, and the stream of instructions
    implementing the expression. 
@@ -336,12 +341,17 @@ let cmp_uop (u:Ast.unop) (ty:Ll.ty) (op:Ll.operand) (ret:Ll.uid) : stream =
 
 *)
 let rec cmp_exp (c:Ctxt.t) (exp:Ast.exp node) : Ll.ty * Ll.operand * stream = match exp.elt with
-  |Id _ -> failwith "cmp_exp: id unimplemented"
+  |Id id -> let idsym = gensym id in
+    let ty, op = Ctxt.lookup id c in
+    (cmp_deref ty), Id idsym , [I (idsym, Load (ty, op))]
   |CNull rty -> Ptr (cmp_rty rty), Null, []
   |CBool v -> I1, Const (if v then 1L else 0L), []
   |CInt v -> I64, Const v, []
-  |CStr st -> let strsym = gensym "str" in 
-    Ptr I8, Gid strsym, [G (strsym, (Array (String.length st + 1, I8), GString st))]
+  |CStr st -> let gstrsym = gensym "str" in 
+    let arr_of_str = Array (String.length st + 1, I8) in
+    let strsym = gensym "str" in 
+    Ptr I8, Id strsym, [G (gstrsym, (arr_of_str, GString st))] 
+    >:: I (strsym, (Gep (Ptr arr_of_str, Gid gstrsym, [Const 0L; Const 0L])))
   |CArr (ty, el) -> failwith "cmp_exp: array unimplemented"
   |NewArr (ty, el) -> failwith "cmp_exp: array unimplemented"
   |Bop (bp, e1, e2) -> let ret = gensym "bop" in
@@ -355,8 +365,11 @@ let rec cmp_exp (c:Ctxt.t) (exp:Ast.exp node) : Ll.ty * Ll.operand * stream = ma
     cmp_ty rt, Ll.Id ret, code >@ cmp_uop up oty op ret
   |_ -> failwith "cmp_exp: unimplemented"
 
-
-
+and cmp_lhs (c:Ctxt.t) (exp:Ast.exp node) : Ll.ty * Ll.operand * stream = match exp.elt with
+  |Id id -> let idsym = gensym id in
+  let ty, op = Ctxt.lookup id c in
+    ty, op, []
+  |_ -> failwith "cmp_lhs: unimplemented"
 
 (* Compile a statement in context c with return typ rt. Return a new context, 
    possibly extended with new local bindings, and the instruction stream
@@ -388,6 +401,22 @@ let rec cmp_stmt (c:Ctxt.t) (rt:Ll.ty) (stmt:Ast.stmt node) : Ctxt.t * stream = 
   |Ret None -> c, [T (Ret (rt, None))]
   |Ret Some rval -> let (_, op, stm) = cmp_exp c rval in
     c, stm >@ [T (Ret (rt, Some op))]
+  |Assn (lhs, e) -> let _, lop, lcode = cmp_lhs c lhs in
+    let rty, rop, rcode = cmp_exp c e in
+    c, lcode >@ rcode >:: I (gensym "store", Store (rty, rop, lop))
+  |Decl (id, v) -> let (ty, op, stm) = cmp_exp c v in
+    let vid = gensym id in
+    (Ctxt.add c id (Ptr ty, Id vid)), stm >:: E (vid, Alloca ty) >:: I (gensym "store", Store (ty, op, Id vid))
+  |If (cnd, s1, s2) -> let _, op, ifcode = cmp_exp c cnd in
+    let _, thcode = cmp_block c rt s1 in
+    let _, elcode = cmp_block c rt s2 in
+    let thlbl = gensym "then" in
+    let ellbl = gensym "else" in
+    let endlbl = gensym "end" in
+    c, ifcode >:: T (Cbr (op, thlbl, ellbl))  
+      >:: L thlbl >@ thcode >:: T (Br endlbl) 
+      >:: L ellbl >@ elcode >:: T (Br endlbl) 
+      >:: L endlbl
   |_ -> failwith "cmp_stmt not implemented"
 
 
@@ -431,7 +460,7 @@ let cmp_global_ctxt (c:Ctxt.t) (p:Ast.prog) : Ctxt.t =
       |NewArr (ty, _) -> TRef (RArray ty)
       |_ -> failwith "cmp_global_ctxt: invalid initializer" 
     in
-     Ctxt.add c name (cmp_ty gt, Gid name)
+     Ctxt.add c name (Ptr(cmp_ty gt), Gid name)
   | _ -> c
 ) c p 
 
