@@ -304,8 +304,21 @@ let oat_alloc_array (t:Ast.ty) (size:Ll.operand) : Ll.ty * operand * stream =
     ; ans_id, Bitcast(arr_ty, Id arr_id, ans_ty) ]
 
 
+(* aux functions *)
+let cmp_bop (b:Ast.binop) (ty:Ll.ty) (op1:Ll.operand) (op2:Ll.operand) (ret:Ll.uid) : stream =
+  let trans_bop (b:Ast.binop) : Ll.bop = match b with Add -> Add|Sub -> Sub|Mul -> Mul|IAnd -> And|IOr -> Or|Shl -> Shl|Shr -> Lshr
+  |Sar -> Ashr|And -> And|Or -> Or|_ -> failwith "transbop: invalid binop" in
+  let trans_cnd (b:Ast.binop) : Ll.cnd = match b with Eq -> Eq|Neq -> Ne|Gt -> Sgt|Gte -> Sge|Lt -> Slt|Lte -> Sle
+  |_ -> failwith "trans_cnd: invalid binop" in
+  match b with 
+  |Eq|Neq|Lt|Lte|Gt|Gte -> [I (ret, Icmp ((trans_cnd b),ty , op1, op2))]
+  |_ -> [I (ret, Binop ((trans_bop b),ty , op1, op2))]
 
-
+let cmp_uop (u:Ast.unop) (ty:Ll.ty) (op:Ll.operand) (ret:Ll.uid) : stream =
+  match u with 
+  |Neg -> [I (ret, Binop (Sub ,ty , Const 0L, op))]
+  |Lognot -> [I (ret, Binop (Xor ,ty , Const 1L, op))]
+  |Bitnot -> [I (ret, Binop (Xor ,ty , Const (-1L), op))]
 (* Compiles an expression exp in context c, outputting the Ll operand that will
    recieve the value of the expression, and the stream of instructions
    implementing the expression. 
@@ -322,8 +335,27 @@ let oat_alloc_array (t:Ast.ty) (size:Ll.operand) : Ll.ty * operand * stream =
      (CArr) and the (NewArr) expressions
 
 *)
-let rec cmp_exp (c:Ctxt.t) (exp:Ast.exp node) : Ll.ty * Ll.operand * stream =
-  failwith "cmp_exp unimplemented"    
+let rec cmp_exp (c:Ctxt.t) (exp:Ast.exp node) : Ll.ty * Ll.operand * stream = match exp.elt with
+  |Id _ -> failwith "cmp_exp: id unimplemented"
+  |CNull rty -> Ptr (cmp_rty rty), Null, []
+  |CBool v -> I1, Const (if v then 1L else 0L), []
+  |CInt v -> I64, Const v, []
+  |CStr st -> let strsym = gensym "str" in 
+    Ptr I8, Gid strsym, [G (strsym, (Array (String.length st + 1, I8), GString st))]
+  |CArr (ty, el) -> failwith "cmp_exp: array unimplemented"
+  |NewArr (ty, el) -> failwith "cmp_exp: array unimplemented"
+  |Bop (bp, e1, e2) -> let ret = gensym "bop" in
+    let _, _, rt = typ_of_binop bp in
+    let oty, op1, code1 = cmp_exp c e1 in 
+    let _, op2, code2 = cmp_exp c e2 in
+    cmp_ty rt, Ll.Id ret, code1 >@ code2 >@ cmp_bop bp oty op1 op2 ret 
+  |Uop (up, e) -> let ret = gensym "uop" in
+    let _, rt = typ_of_unop up in
+    let oty, op, code = cmp_exp c e in
+    cmp_ty rt, Ll.Id ret, code >@ cmp_uop up oty op ret
+  |_ -> failwith "cmp_exp: unimplemented"
+
+
 
 
 (* Compile a statement in context c with return typ rt. Return a new context, 
@@ -352,8 +384,11 @@ let rec cmp_exp (c:Ctxt.t) (exp:Ast.exp node) : Ll.ty * Ll.operand * stream =
      pointer, you just need to store to it!
 
  *)
-let rec cmp_stmt (c:Ctxt.t) (rt:Ll.ty) (stmt:Ast.stmt node) : Ctxt.t * stream =
-  failwith "cmp_stmt not implemented"
+let rec cmp_stmt (c:Ctxt.t) (rt:Ll.ty) (stmt:Ast.stmt node) : Ctxt.t * stream = match stmt.elt with
+  |Ret None -> c, [T (Ret (rt, None))]
+  |Ret Some rval -> let (_, op, stm) = cmp_exp c rval in
+    c, stm >@ [T (Ret (rt, Some op))]
+  |_ -> failwith "cmp_stmt not implemented"
 
 
 (* Compile a series of statements *)
@@ -435,9 +470,11 @@ let rec cmp_gexp (c:Ctxt.t) (e:Ast.exp node) : Ll.gdecl * (Ll.gid * Ll.gdecl) li
   |CNull rty -> (Ptr (cmp_rty rty), GNull), []
   |CBool v -> (I1, GInt (if v then 1L else 0L)), []
   |CInt v -> (I64, GInt v), []
-  |CStr st -> let strsym = gensym "str" in 
-    (Ptr I8, GGid strsym), [strsym, (Array (String.length st + 1, I8), GString st)]
-  |CArr (ty, el) -> failwith "cmp_gexp: array unimplemented"
+  |CStr st -> let strsym = gensym "gstr" in 
+    let arr_of_str = Array (String.length st + 1, I8) in
+    let cast = GBitcast (Ptr arr_of_str, GGid strsym, Ptr I8) in
+    ((Ptr I8, cast), [strsym, (arr_of_str, GString st)])
+  |CArr _ -> failwith "cmp_gexp: array unimplemented"
   |_ -> failwith "cmp_gexp: invalid global type"
 
 
