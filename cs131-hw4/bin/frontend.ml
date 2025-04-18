@@ -363,6 +363,19 @@ let rec cmp_exp (c:Ctxt.t) (exp:Ast.exp node) : Ll.ty * Ll.operand * stream = ma
     let _, rt = typ_of_unop up in
     let oty, op, code = cmp_exp c e in
     cmp_ty rt, Ll.Id ret, code >@ cmp_uop up oty op ret
+  |Call (e, args) -> let fty, fop = match e.elt with
+    |Id id -> Ctxt.lookup_function id c
+    |_ -> failwith "cmp_exp: invalid call expression" in
+    let tyl, rty = match fty with
+    |Ptr (Fun (tyl, rty)) -> tyl, rty
+    |_ -> failwith "cmp_exp: invalid call type" in
+    let ops, ss = List.fold_left 
+    (fun (acc_ops, acc_ss) e -> let ty, op, s = cmp_exp c e in
+        (ty, op) :: acc_ops, s >@ acc_ss)
+      ([], []) args in
+    let ops = List.rev ops in
+    let res = gensym "call" in
+      rty, Id res, ss >:: I (res, Call (rty, fop, ops))
   |_ -> failwith "cmp_exp: unimplemented"
 
 and cmp_lhs (c:Ctxt.t) (exp:Ast.exp node) : Ll.ty * Ll.operand * stream = match exp.elt with
@@ -430,7 +443,8 @@ let rec cmp_stmt (c:Ctxt.t) (rt:Ll.ty) (stmt:Ast.stmt node) : Ctxt.t * stream = 
     let nblk = blk @ (match tail with None -> [] |Some ntail -> [ntail]) in
     let ncnd = match cnd with None -> no_loc (CBool true)| Some cond -> cond in
     c, snd (cmp_block c rt (vals @ [no_loc (While (ncnd, nblk))]))
-  |_ -> failwith "cmp_stmt not implemented"
+  |SCall (e, el) -> let _, _, s = cmp_exp c (no_loc (Call (e, el))) in
+    c, s
 
 
 (* Compile a series of statements *)
@@ -492,7 +506,19 @@ let cmp_fdecl (c:Ctxt.t) (f:Ast.fdecl node) : Ll.fdecl * (Ll.gid * Ll.gdecl) lis
   let rt = cmp_ret_ty f.elt.frtyp in
   let f_ty = (List.map (fun (arg, _) -> cmp_ty arg) f.elt.args), rt in
   let f_param = List.map snd f.elt.args in
-  let f_cfg, gdecls = cfg_of_stream (snd (cmp_block c rt f.elt.body)) in
+  let pass_arg (c:Ctxt.t) ((ty, id):(Ast.ty * Ast.id)) : Ctxt.t * (uid * insn) list =
+    let ty_arg = cmp_ty ty in
+    let para = gensym id in
+    let nc = Ctxt.add c id (Ptr ty_arg, Id para) in
+    nc, [para, Alloca ty_arg; gensym "store", Store (ty_arg, Id id, Id para)]
+  in
+  let nc, pcode = List.fold_left 
+    (fun (c, code) (ty, id) -> let nc, ncode = pass_arg c (ty, id) in nc, code @ ncode)
+    (c, []) f.elt.args in
+  let plbl = gensym "prework" in
+  let pblk = {insns = pcode; term = "", Br plbl} in
+  let (f_entry, f_body_cfg), gdecls = cfg_of_stream (snd (cmp_block nc rt f.elt.body)) in
+  let f_cfg = pblk , ((plbl, f_entry)::f_body_cfg) in
     {f_ty; f_param; f_cfg}, gdecls
 
 
