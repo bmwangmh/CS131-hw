@@ -417,6 +417,19 @@ let rec cmp_stmt (c:Ctxt.t) (rt:Ll.ty) (stmt:Ast.stmt node) : Ctxt.t * stream = 
       >:: L thlbl >@ thcode >:: T (Br endlbl) 
       >:: L ellbl >@ elcode >:: T (Br endlbl) 
       >:: L endlbl
+  |While (cnd, s) -> let _, op, ifcode = cmp_exp c cnd in
+    let _, code = cmp_block c rt s in
+    let stlbl = gensym "while" in
+    let blbl = gensym "body" in
+    let endlbl = gensym "end" in
+    c, [T (Br stlbl)] 
+      >:: L stlbl >@ ifcode >:: T (Cbr (op, blbl, endlbl))
+      >:: L blbl >@ code >:: T (Br stlbl)
+      >:: L endlbl
+  |For (vdecls, cnd, tail, blk) -> let vals = List.map (fun vd -> no_loc (Decl vd)) vdecls in
+    let nblk = blk @ (match tail with None -> [] |Some ntail -> [ntail]) in
+    let ncnd = match cnd with None -> no_loc (CBool true)| Some cond -> cond in
+    c, snd (cmp_block c rt (vals @ [no_loc (While (ncnd, nblk))]))
   |_ -> failwith "cmp_stmt not implemented"
 
 
