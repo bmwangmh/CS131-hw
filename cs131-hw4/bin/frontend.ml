@@ -341,9 +341,6 @@ let cmp_deref (ty:Ll.ty) : Ll.ty =
 
 *)
 let rec cmp_exp (c:Ctxt.t) (exp:Ast.exp node) : Ll.ty * Ll.operand * stream = match exp.elt with
-  |Id id -> let idsym = gensym id in
-    let ty, op = Ctxt.lookup id c in
-    (cmp_deref ty), Id idsym , [I (idsym, Load (ty, op))]
   |CNull rty -> Ptr (cmp_rty rty), Null, []
   |CBool v -> I1, Const (if v then 1L else 0L), []
   |CInt v -> I64, Const v, []
@@ -352,8 +349,44 @@ let rec cmp_exp (c:Ctxt.t) (exp:Ast.exp node) : Ll.ty * Ll.operand * stream = ma
     let strsym = gensym "str" in 
     Ptr I8, Id strsym, [G (gstrsym, (arr_of_str, GString st))] 
     >:: I (strsym, (Gep (Ptr arr_of_str, Gid gstrsym, [Const 0L; Const 0L])))
-  |CArr (ty, el) -> failwith "cmp_exp: array unimplemented"
-  |NewArr (ty, el) -> failwith "cmp_exp: array unimplemented"
+  |CArr (ty, el) -> let aty, aop, acode = oat_alloc_array ty (Const (Int64.of_int (List.length el))) in
+    let tsym = gensym "tmp" in
+    let nc = Ctxt.add c tsym (Ptr aty, Id tsym) in
+    let cmp_arr_idx (idx:int64) (exp:Ast.exp node) : stream = 
+      let ety, eop, ecode = cmp_exp c exp in
+      let _, lop, lcode = cmp_lhs nc (no_loc (Index (no_loc (Id tsym), no_loc (CInt idx)))) in
+      ecode >@ lcode >:: I (gensym "store", Store (ety, eop, lop))
+    in
+    let _, stm = List.fold_left (fun (acc, s) e -> 
+      (Int64.succ acc, 
+      s >@ cmp_arr_idx acc e)) 
+      (0L, []) el
+    in
+  aty, aop, acode >:: I (tsym, Alloca aty) >:: I (gensym "store", Store (aty, aop, Id tsym)) >@ stm
+  |NewArr (ty, e) -> let _, lop, lcode = cmp_exp c e in
+    let aty, aop, acode = oat_alloc_array ty lop in
+    let tsym = gensym "tmp" in
+    let szsym = gensym "size" in
+    let nc = Ctxt.add (Ctxt.add c tsym (Ptr aty, Id tsym)) 
+      szsym (Ptr I64, Id szsym) in
+    let i = gensym "i" in
+    let _, stm = cmp_stmt nc Void (no_loc (
+      For (
+        [i, no_loc (CInt 0L)],
+        Some (no_loc (Bop (Lt, no_loc(Id i), no_loc(Id szsym)))),
+        Some (no_loc (Assn (no_loc(Id i),
+          no_loc(Bop (Add, no_loc(Id i), no_loc(CInt 1L)))))),
+        [no_loc(Assn (no_loc(Index (no_loc(Id tsym), no_loc(Id i))),
+          match ty with TInt -> no_loc(CInt 0L)|TBool -> no_loc(CBool false)
+          |_ -> failwith "cmp_exp:unsupplied newarr type"))]
+      )
+    ))
+    in
+    aty, aop, lcode >@ acode
+    >:: I (tsym, Alloca aty) >:: I (szsym, Alloca I64)
+    >:: I (gensym "store", Store (aty, aop, Id tsym))
+    >:: I (gensym "store", Store (I64, lop, Id szsym))
+    >@ stm
   |Bop (bp, e1, e2) -> let ret = gensym "bop" in
     let _, _, rt = typ_of_binop bp in
     let oty, op1, code1 = cmp_exp c e1 in 
@@ -376,12 +409,25 @@ let rec cmp_exp (c:Ctxt.t) (exp:Ast.exp node) : Ll.ty * Ll.operand * stream = ma
     let ops = List.rev ops in
     let res = gensym "call" in
       rty, Id res, ss >:: I (res, Call (rty, fop, ops))
-  |_ -> failwith "cmp_exp: unimplemented"
+  |Id id -> let idsym = gensym id in
+    let ty, op = Ctxt.lookup id c in
+    (cmp_deref ty), Id idsym , [I (idsym, Load (ty, op))]
+  |Index (arr, idx) -> let pty, op, pcode = cmp_lhs c exp in
+      let res = gensym "result" in
+      (cmp_deref pty), Id res, pcode >:: I (res, Load (pty, op))
 
 and cmp_lhs (c:Ctxt.t) (exp:Ast.exp node) : Ll.ty * Ll.operand * stream = match exp.elt with
   |Id id -> let idsym = gensym id in
-  let ty, op = Ctxt.lookup id c in
+    let ty, op = Ctxt.lookup id c in
     ty, op, []
+  |Index (arr, idx) -> 
+    let aty, aop, acode = cmp_exp c arr in
+    let ety = match aty with |Ptr Struct [I64; Array (0, ety)] -> ety 
+    |_ -> failwith "cmp_lhs: not an array" in
+    let _, iop, icode = cmp_exp c idx in
+    let idsym = gensym "index" in
+    Ptr ety, Id idsym, 
+    acode >@ icode >:: I (idsym, Gep (aty, aop, [Const 0L; Const 1L; iop]))
   |_ -> failwith "cmp_lhs: unimplemented"
 
 (* Compile a statement in context c with return typ rt. Return a new context, 
@@ -410,7 +456,7 @@ and cmp_lhs (c:Ctxt.t) (exp:Ast.exp node) : Ll.ty * Ll.operand * stream = match 
      pointer, you just need to store to it!
 
  *)
-let rec cmp_stmt (c:Ctxt.t) (rt:Ll.ty) (stmt:Ast.stmt node) : Ctxt.t * stream = match stmt.elt with
+and cmp_stmt (c:Ctxt.t) (rt:Ll.ty) (stmt:Ast.stmt node) : Ctxt.t * stream = match stmt.elt with
   |Ret None -> c, [T (Ret (rt, None))]
   |Ret Some rval -> let (_, op, stm) = cmp_exp c rval in
     c, stm >@ [T (Ret (rt, Some op))]
@@ -542,7 +588,17 @@ let rec cmp_gexp (c:Ctxt.t) (e:Ast.exp node) : Ll.gdecl * (Ll.gid * Ll.gdecl) li
     let arr_of_str = Array (String.length st + 1, I8) in
     let cast = GBitcast (Ptr arr_of_str, GGid strsym, Ptr I8) in
     ((Ptr I8, cast), [strsym, (arr_of_str, GString st)])
-  |CArr _ -> failwith "cmp_gexp: array unimplemented"
+  |CArr (ty, es) -> let l = List.length es in
+    let ety = cmp_ty ty in
+    let arr_ty = Struct [I64; Array (l, ety)] in
+    let arrsym = gensym "garr" in
+    let gexps = List.map (cmp_gexp c) es in
+    let narr_ty = Struct [I64; Array (0, ety)] in
+    let cast = GBitcast (Ptr arr_ty, GGid arrsym, Ptr narr_ty) in
+    (Ptr narr_ty, cast)
+    ,(arrsym, (arr_ty, GStruct [(I64, GInt (Int64.of_int l));
+    (Array (l, ety), GArray (List.map fst gexps))]))
+    ::List.flatten (List.map snd gexps)
   |_ -> failwith "cmp_gexp: invalid global type"
 
 
